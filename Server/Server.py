@@ -11,10 +11,27 @@ app = FastAPI(title="VLM Image Description API")
 # Load model at startup
 print("Loading Moondream2 model...")
 model_id = "vikhyatk/moondream2"
-device = "mps" if torch.backends.mps.is_available() else "cpu"
-model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True).to(device)
+
+# Determine device
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.backends.mps.is_available():
+    device = "mps"
+else:
+    device = "cpu"
+
+# Load with float16 for faster inference
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    trust_remote_code=True,
+    torch_dtype=torch.float16
+).to(device)
+
+model.eval()
+torch.set_grad_enabled(False)
+
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-print(f"Model loaded on {device}")
+print(f"Model loaded on {device} with float16")
 
 SYSTEM_PROMPT = "Describe this image in detail. Focus primarily on the main subject, including its appearance, actions, and notable features. Also describe the background and overall scene context."
 
