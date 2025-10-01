@@ -37,7 +37,7 @@ export default function DetectionResults({
                 }
               `}
             >
-              <div className="aspect-square bg-gray-100 rounded overflow-hidden mb-1.5">
+              <div className="bg-gray-100 rounded overflow-hidden mb-1.5 flex items-center justify-center min-h-[120px]">
                 <DetectionThumbnail
                   imageUrl={imageUrl}
                   detection={detection}
@@ -74,7 +74,7 @@ function DetectionThumbnail({ imageUrl, detection }: { imageUrl: string; detecti
     <img
       src={croppedImageSrc}
       alt={detection.class}
-      className="w-full h-full object-cover"
+      className="max-w-full max-h-[200px] object-contain"
     />
   );
 }

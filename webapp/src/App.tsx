@@ -120,7 +120,7 @@ function App() {
             </h1>
           </div>
           <p className="text-gray-600">
-            Upload an image, detect objects, and get a detailed description of the image.
+            Upload an image, detect people/vehicles, and get a detailed description of the image.
           </p>
         </header>
 
@@ -166,7 +166,7 @@ function App() {
                     ) : (
                       <span className="flex items-center gap-2">
                         <Eye size={20} />
-                        Detect Objects
+                        Detect
                       </span>
                     )}
                   </button>
