@@ -53,6 +53,13 @@ function App() {
 
     try {
       const results = await detectObjects(imageFile);
+
+      if (results.detections.length === 0) {
+        alert('No objects detected in the image. Please try another image.');
+        setIsDetecting(false);
+        return;
+      }
+
       setDetections(results.detections);
       setAnnotatedImageUrl(`data:image/jpeg;base64,${results.annotatedImage}`);
       setShowChat(true);
