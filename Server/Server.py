@@ -69,6 +69,28 @@ def downscale_image(image: Image.Image, max_size: int = 512) -> Image.Image:
         image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     return image
 
+def build_conversation_context(history: list, current_message: str, max_messages: int = 20) -> str:
+    """
+    Build a conversation context prompt with history.
+    Automatically keeps only the last max_messages to prevent context overflow.
+    """
+    # Keep only last N messages (sliding window)
+    recent_history = history[-max_messages:] if len(history) > max_messages else history
+
+    # Format conversation history
+    context_parts = []
+    if recent_history:
+        context_parts.append("Previous conversation:")
+        for msg in recent_history:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            context_parts.append(f"{role}: {msg['content']}")
+        context_parts.append("")  # Blank line separator
+
+    # Add current question
+    context_parts.append(f"Current question: {current_message}")
+
+    return "\n".join(context_parts)
+
 @app.post("/start-chat")
 async def start_chat_session(file: UploadFile = File(...)):
     """
@@ -107,9 +129,12 @@ async def start_chat_session(file: UploadFile = File(...)):
         encode_time = time.time() - step_start
         print(f"[4] Image encoding: {encode_time:.3f}s")
 
-        # Generate session ID and store encoded image
+        # Generate session ID and store encoded image with empty history
         session_id = str(uuid.uuid4())
-        sessions[session_id] = enc_image
+        sessions[session_id] = {
+            "enc_image": enc_image,
+            "history": []
+        }
         print(f"[5] Session created: {session_id}")
 
         # Generate initial description
@@ -155,20 +180,33 @@ async def chat_with_image(request: ChatRequest):
         print(f"Session ID: {request.session_id}")
         print(f"Message: {request.message}")
 
-        # Retrieve encoded image from session
+        # Retrieve session data
         if request.session_id not in sessions:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Session not found. Please start a new chat session."}
             )
 
-        enc_image = sessions[request.session_id]
+        session_data = sessions[request.session_id]
+        enc_image = session_data["enc_image"]
+        history = session_data["history"]
 
-        # Generate response
+        # Build conversation context with history
         step_start = time.time()
-        response = model.answer_question(enc_image, request.message, tokenizer)
+        context = build_conversation_context(history, request.message)
+        context_build_time = time.time() - step_start
+        print(f"[1] Context built with {len(history)} previous messages: {context_build_time:.3f}s")
+
+        # Generate response with context
+        step_start = time.time()
+        response = model.answer_question(enc_image, context, tokenizer)
         generation_time = time.time() - step_start
-        print(f"[1] Response generated: {generation_time:.3f}s")
+        print(f"[2] Response generated: {generation_time:.3f}s")
+
+        # Add user message and assistant response to history
+        session_data["history"].append({"role": "user", "content": request.message})
+        session_data["history"].append({"role": "assistant", "content": response})
+        print(f"[3] History updated: {len(session_data['history'])} total messages")
 
         total_time = time.time() - request_start
         print(f"\nTotal request time: {total_time:.3f}s")
