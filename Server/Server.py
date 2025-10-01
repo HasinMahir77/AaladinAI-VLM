@@ -9,8 +9,13 @@ import io
 import time
 import base64
 import cv2
+import uuid
+from pydantic import BaseModel
 
 app = FastAPI(title="VLM Image Description API")
+
+# Session storage for encoded images
+sessions = {}
 
 # Add CORS middleware
 app.add_middleware(
@@ -53,17 +58,142 @@ print("YOLO model loaded on CPU")
 
 SYSTEM_PROMPT = "Describe this image in detail. Focus primarily on the main subject, including its appearance, actions, and notable features. Also describe the background and overall scene context."
 
+# Request models
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+
 def downscale_image(image: Image.Image, max_size: int = 512) -> Image.Image:
     """Downscale image while maintaining aspect ratio"""
     if max(image.size) > max_size:
         image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     return image
 
+@app.post("/start-chat")
+async def start_chat_session(file: UploadFile = File(...)):
+    """
+    Start a new chat session by uploading an image.
+    Returns a session_id and initial description.
+    The encoded image is cached for follow-up questions.
+    """
+    try:
+        request_start = time.time()
+        print(f"\n{'='*50}")
+        print(f"New chat session request received")
+
+        # Read and process image
+        step_start = time.time()
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+        print(f"[1] Image read: {time.time() - step_start:.3f}s | Size: {image.size}")
+
+        # Convert to RGB if needed
+        step_start = time.time()
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+            print(f"[2] RGB conversion: {time.time() - step_start:.3f}s")
+        else:
+            print(f"[2] RGB conversion: skipped (already RGB)")
+
+        # Downscale image
+        step_start = time.time()
+        original_size = image.size
+        image = downscale_image(image)
+        print(f"[3] Downscaling: {time.time() - step_start:.3f}s | {original_size} -> {image.size}")
+
+        # Encode image and store in session
+        step_start = time.time()
+        enc_image = model.encode_image(image)
+        encode_time = time.time() - step_start
+        print(f"[4] Image encoding: {encode_time:.3f}s")
+
+        # Generate session ID and store encoded image
+        session_id = str(uuid.uuid4())
+        sessions[session_id] = enc_image
+        print(f"[5] Session created: {session_id}")
+
+        # Generate initial description
+        step_start = time.time()
+        description = model.answer_question(enc_image, SYSTEM_PROMPT, tokenizer)
+        generation_time = time.time() - step_start
+        print(f"[6] Initial description generated: {generation_time:.3f}s")
+
+        total_time = time.time() - request_start
+        print(f"\nTotal request time: {total_time:.3f}s")
+        print(f"Active sessions: {len(sessions)}")
+        print(f"{'='*50}\n")
+
+        return JSONResponse({
+            "session_id": session_id,
+            "description": description,
+            "image_size": image.size,
+            "device": device,
+            "timing": {
+                "encoding_time": f"{encode_time:.3f}s",
+                "generation_time": f"{generation_time:.3f}s",
+                "total_time": f"{total_time:.3f}s"
+            }
+        })
+
+    except Exception as e:
+        print(f"ERROR: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+@app.post("/chat")
+async def chat_with_image(request: ChatRequest):
+    """
+    Send a follow-up message about a previously uploaded image.
+    Requires a valid session_id from /start-chat.
+    """
+    try:
+        request_start = time.time()
+        print(f"\n{'='*50}")
+        print(f"Chat message received")
+        print(f"Session ID: {request.session_id}")
+        print(f"Message: {request.message}")
+
+        # Retrieve encoded image from session
+        if request.session_id not in sessions:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Session not found. Please start a new chat session."}
+            )
+
+        enc_image = sessions[request.session_id]
+
+        # Generate response
+        step_start = time.time()
+        response = model.answer_question(enc_image, request.message, tokenizer)
+        generation_time = time.time() - step_start
+        print(f"[1] Response generated: {generation_time:.3f}s")
+
+        total_time = time.time() - request_start
+        print(f"\nTotal request time: {total_time:.3f}s")
+        print(f"{'='*50}\n")
+
+        return JSONResponse({
+            "response": response,
+            "timing": {
+                "generation_time": f"{generation_time:.3f}s",
+                "total_time": f"{total_time:.3f}s"
+            }
+        })
+
+    except Exception as e:
+        print(f"ERROR: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
 @app.post("/describe")
 async def describe_image(file: UploadFile = File(...)):
     """
-    Upload an image and get a detailed description.
-    The model will focus on the main subject and background.
+    Upload an image and get a detailed description (legacy endpoint).
+    For interactive chat, use /start-chat and /chat instead.
     """
     try:
         request_start = time.time()
@@ -231,10 +361,13 @@ async def root():
     return {
         "message": "VLM Image Description API",
         "endpoints": {
-            "/describe": "POST - Get image description",
-            "/detect": "POST - Detect people and vehicles"
+            "/start-chat": "POST - Start chat session with image (returns session_id)",
+            "/chat": "POST - Send message to existing session",
+            "/detect": "POST - Detect people and vehicles",
+            "/describe": "POST - Get image description (legacy)"
         },
-        "device": device
+        "device": device,
+        "active_sessions": len(sessions)
     }
 
 if __name__ == "__main__":

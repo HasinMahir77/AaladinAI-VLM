@@ -5,7 +5,7 @@ import DetectionResults from './components/DetectionResults';
 import ChatInterface from './components/ChatInterface';
 import { Detection, ChatMessage } from './types/detection';
 import { detectObjects } from './services/detectionService';
-import { chatWithVLM } from './services/vlmService';
+import { startChatSession, sendChatMessage } from './services/vlmService';
 
 function App() {
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -17,6 +17,7 @@ function App() {
   const [showChat, setShowChat] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoadingResponse, setIsLoadingResponse] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const handleImageSelected = (file: File, url: string) => {
     setImageFile(file);
@@ -78,6 +79,7 @@ function App() {
   const handleSelectDetection = async (id: string) => {
     setSelectedDetectionId(id);
     setMessages([]);
+    setCurrentSessionId(null);
 
     const selectedDetection = detections.find(d => d.id === id);
     if (!selectedDetection) return;
@@ -85,7 +87,9 @@ function App() {
     setIsLoadingResponse(true);
 
     try {
-      const description = await chatWithVLM('', selectedDetection, imageUrl);
+      const { sessionId, description } = await startChatSession(selectedDetection);
+
+      setCurrentSessionId(sessionId);
 
       const assistantMessage: ChatMessage = {
         id: Date.now().toString(),
@@ -96,14 +100,53 @@ function App() {
 
       setMessages([assistantMessage]);
     } catch (error) {
-      console.error('Description failed:', error);
+      console.error('Failed to start chat session:', error);
       const errorMessage: ChatMessage = {
         id: Date.now().toString(),
         role: 'assistant',
-        content: 'Sorry, I encountered an error generating the description. Please try again.',
+        content: 'Sorry, I encountered an error starting the chat session. Please try again.',
         timestamp: Date.now()
       };
       setMessages([errorMessage]);
+    } finally {
+      setIsLoadingResponse(false);
+    }
+  };
+
+  const handleSendMessage = async (message: string) => {
+    if (!currentSessionId) return;
+
+    // Add user message to chat
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: message,
+      timestamp: Date.now()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoadingResponse(true);
+
+    try {
+      const response = await sendChatMessage(currentSessionId, message);
+
+      const assistantMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: response,
+        timestamp: Date.now()
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Chat message failed:', error);
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'Sorry, I encountered an error processing your message. Please try again.',
+        timestamp: Date.now()
+      };
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoadingResponse(false);
     }
@@ -198,7 +241,7 @@ function App() {
 
           <div className="lg:sticky lg:top-6 lg:self-start">
             <ChatInterface
-              onSendMessage={async () => {}}
+              onSendMessage={handleSendMessage}
               messages={messages}
               isLoading={isLoadingResponse}
               disabled={!isChatEnabled}
