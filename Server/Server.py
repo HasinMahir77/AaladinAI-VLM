@@ -53,7 +53,7 @@ print(f"Model loaded on {device} with float16")
 
 # Load YOLO model on CPU
 print("Loading YOLO model...")
-yolo_model = YOLO("yolo12n.pt").to("cpu")
+yolo_model = YOLO("yolo12m.pt").to("cpu")
 print("YOLO model loaded on CPU")
 
 SYSTEM_PROMPT = "Describe this image in detail. Focus primarily on the main subject, including its appearance, actions, and notable features. Also describe the background and overall scene context."
