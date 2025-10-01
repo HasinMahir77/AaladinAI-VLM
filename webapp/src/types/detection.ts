@@ -1,15 +1,9 @@
-export interface BoundingBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface Detection {
   id: string;
-  label: string;
+  class: string;
+  class_id: number;
   confidence: number;
-  bbox: BoundingBox;
+  cropped_image: string;
 }
 
 export interface DetectionResult {

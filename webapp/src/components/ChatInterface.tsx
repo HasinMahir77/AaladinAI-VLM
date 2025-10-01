@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { useRef, useEffect } from 'react';
+import { Bot, User, Loader2 } from 'lucide-react';
 import { ChatMessage } from '../types/detection';
 
 interface ChatInterfaceProps {
@@ -10,40 +10,11 @@ interface ChatInterfaceProps {
 }
 
 export default function ChatInterface({ onSendMessage, messages, isLoading, disabled = false }: ChatInterfaceProps) {
-  const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-
-    const messageText = input.trim();
-    setInput('');
-
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-
-    await onSendMessage(messageText);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
-
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
-  };
 
   return (
     <div className={`bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200 ${disabled ? 'opacity-50' : ''}`}>
@@ -51,8 +22,8 @@ export default function ChatInterface({ onSendMessage, messages, isLoading, disa
         <div className="flex items-center gap-3">
           <Bot size={20} />
           <div>
-            <h2 className="text-lg font-bold">Ask VLM</h2>
-            <p className="text-xs text-blue-50">Chat about the detected object</p>
+            <h2 className="text-lg font-bold">VLM Description</h2>
+            <p className="text-xs text-blue-50">AI-generated description of detected object</p>
           </div>
         </div>
       </div>
@@ -64,8 +35,8 @@ export default function ChatInterface({ onSendMessage, messages, isLoading, disa
               <Bot size={40} className="mx-auto mb-2 opacity-50" />
               <p className="text-sm">
                 {disabled
-                  ? 'Upload an image, run detection, and select an object to start chatting'
-                  : 'Start a conversation about the detected object'
+                  ? 'Upload an image, run detection, and select an object'
+                  : 'Select a detected object to see its description'
                 }
               </p>
             </div>
@@ -118,30 +89,6 @@ export default function ChatInterface({ onSendMessage, messages, isLoading, disa
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="border-t border-gray-200 p-3 bg-white">
-        <div className="flex gap-2">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleTextareaChange}
-            onKeyDown={handleKeyDown}
-            placeholder={disabled ? "Select a detection to start chatting..." : "Ask about the detected object..."}
-            disabled={isLoading || disabled}
-            rows={1}
-            className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed overflow-hidden"
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || isLoading || disabled}
-            className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg hover:from-blue-600 hover:to-cyan-600 disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-md disabled:shadow-none"
-          >
-            <Send size={18} />
-          </button>
-        </div>
-        <p className="text-xs text-gray-400 mt-1.5">
-          Press Enter to send, Shift+Enter for new line
-        </p>
-      </form>
     </div>
   );
 }

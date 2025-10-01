@@ -8,6 +8,7 @@ import torch
 import io
 import time
 import base64
+import cv2
 
 app = FastAPI(title="VLM Image Description API")
 
@@ -161,7 +162,7 @@ async def detect_objects(file: UploadFile = File(...)):
 
         for result in results:
             boxes = result.boxes
-            for i, box in enumerate(boxes):
+            for box in boxes:
                 cls_id = int(box.cls[0])
 
                 # Only process people and vehicles
@@ -183,14 +184,20 @@ async def detect_objects(file: UploadFile = File(...)):
                         "class": class_name,
                         "class_id": cls_id,
                         "confidence": confidence,
-                        "bbox": {
-                            "x1": x1,
-                            "y1": y1,
-                            "x2": x2,
-                            "y2": y2
-                        },
                         "cropped_image": img_str
                     })
+
+        # Generate annotated image with bounding boxes using YOLO's plot method
+        annotated_frame = results[0].plot()  # Returns numpy array with boxes drawn
+
+        # Convert numpy array (BGR) to PIL Image (RGB)
+        annotated_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        annotated_pil = Image.fromarray(annotated_rgb)
+
+        # Convert annotated image to base64
+        buffered = io.BytesIO()
+        annotated_pil.save(buffered, format="JPEG")
+        annotated_img_str = base64.b64encode(buffered.getvalue()).decode()
 
         processing_time = time.time() - step_start
         print(f"[3] Processing detections: {processing_time:.3f}s")
@@ -203,6 +210,7 @@ async def detect_objects(file: UploadFile = File(...)):
         return JSONResponse({
             "detections": detections,
             "count": len(detections),
+            "annotated_image": annotated_img_str,
             "image_size": {"width": image.size[0], "height": image.size[1]},
             "timing": {
                 "detection_time": f"{detection_time:.3f}s",

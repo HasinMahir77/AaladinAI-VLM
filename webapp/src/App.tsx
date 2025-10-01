@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Eye, X } from 'lucide-react';
 import ImageUpload from './components/ImageUpload';
-import DetectionCanvas from './components/DetectionCanvas';
 import DetectionResults from './components/DetectionResults';
 import ChatInterface from './components/ChatInterface';
 import { Detection, ChatMessage } from './types/detection';
@@ -11,6 +10,7 @@ import { chatWithVLM } from './services/vlmService';
 function App() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string>('');
+  const [annotatedImageUrl, setAnnotatedImageUrl] = useState<string>('');
   const [detections, setDetections] = useState<Detection[]>([]);
   const [selectedDetectionId, setSelectedDetectionId] = useState<string>('');
   const [isDetecting, setIsDetecting] = useState(false);
@@ -21,6 +21,7 @@ function App() {
   const handleImageSelected = (file: File, url: string) => {
     setImageFile(file);
     setImageUrl(url);
+    setAnnotatedImageUrl('');
     setDetections([]);
     setSelectedDetectionId('');
     setShowChat(false);
@@ -33,6 +34,7 @@ function App() {
     }
     setImageFile(null);
     setImageUrl('');
+    setAnnotatedImageUrl('');
     setDetections([]);
     setSelectedDetectionId('');
     setShowChat(false);
@@ -44,13 +46,15 @@ function App() {
 
     setIsDetecting(true);
     setDetections([]);
+    setAnnotatedImageUrl('');
     setSelectedDetectionId('');
     setShowChat(false);
     setMessages([]);
 
     try {
       const results = await detectObjects(imageFile);
-      setDetections(results);
+      setDetections(results.detections);
+      setAnnotatedImageUrl(`data:image/jpeg;base64,${results.annotatedImage}`);
       setShowChat(true);
     } catch (error) {
       console.error('Detection failed:', error);
@@ -60,47 +64,35 @@ function App() {
     }
   };
 
-  const handleSelectDetection = (id: string) => {
+  const handleSelectDetection = async (id: string) => {
     setSelectedDetectionId(id);
     setMessages([]);
-  };
 
-  const handleSendMessage = async (messageText: string) => {
-    if (!selectedDetectionId) return;
-
-    const selectedDetection = detections.find(d => d.id === selectedDetectionId);
+    const selectedDetection = detections.find(d => d.id === id);
     if (!selectedDetection) return;
 
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: messageText,
-      timestamp: Date.now()
-    };
-
-    setMessages(prev => [...prev, userMessage]);
     setIsLoadingResponse(true);
 
     try {
-      const response = await chatWithVLM(messageText, selectedDetection, imageUrl);
+      const description = await chatWithVLM('', selectedDetection, imageUrl);
 
       const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
+        id: Date.now().toString(),
         role: 'assistant',
-        content: response,
+        content: description,
         timestamp: Date.now()
       };
 
-      setMessages(prev => [...prev, assistantMessage]);
+      setMessages([assistantMessage]);
     } catch (error) {
-      console.error('Chat failed:', error);
+      console.error('Description failed:', error);
       const errorMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
+        id: Date.now().toString(),
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
+        content: 'Sorry, I encountered an error generating the description. Please try again.',
         timestamp: Date.now()
       };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages([errorMessage]);
     } finally {
       setIsLoadingResponse(false);
     }
@@ -117,11 +109,11 @@ function App() {
               <Eye size={24} className="text-white" />
             </div>
             <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent">
-              Vision Detection Studio
+              YOLO v12 with VLM
             </h1>
           </div>
           <p className="text-gray-600">
-            Upload an image, detect objects, and chat with AI about your findings
+            Upload an image, detect objects, and get a detailed description of the image.
           </p>
         </header>
 
@@ -129,12 +121,12 @@ function App() {
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-lg p-6">
               <h2 className="text-xl font-bold text-gray-800 mb-4">Image Upload</h2>
-              {imageUrl && detections.length > 0 ? (
+              {annotatedImageUrl ? (
                 <div className="relative">
-                  <DetectionCanvas
-                    imageUrl={imageUrl}
-                    detections={detections}
-                    selectedDetectionId={selectedDetectionId}
+                  <img
+                    src={annotatedImageUrl}
+                    alt="Detection preview with bounding boxes"
+                    className="w-full h-auto max-h-80 object-contain rounded-lg shadow-md"
                   />
                   <button
                     onClick={handleRemoveImage}
@@ -190,7 +182,7 @@ function App() {
 
           <div className="lg:sticky lg:top-6 lg:self-start">
             <ChatInterface
-              onSendMessage={handleSendMessage}
+              onSendMessage={async () => {}}
               messages={messages}
               isLoading={isLoadingResponse}
               disabled={!isChatEnabled}

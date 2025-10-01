@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import { Check } from 'lucide-react';
 import { Detection } from '../types/detection';
 
@@ -15,23 +14,6 @@ export default function DetectionResults({
   selectedDetectionId,
   onSelectDetection
 }: DetectionResultsProps) {
-  const cropImage = (detection: Detection): string => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    img.src = imageUrl;
-
-    const { x, y, width, height } = detection.bbox;
-    canvas.width = width;
-    canvas.height = height;
-
-    if (ctx) {
-      ctx.drawImage(img, x, y, width, height, 0, 0, width, height);
-    }
-
-    return canvas.toDataURL();
-  };
-
   return (
     <div className="mt-6">
       <h3 className="text-lg font-bold text-gray-800 mb-3">
@@ -64,7 +46,7 @@ export default function DetectionResults({
 
               <div className="text-left">
                 <p className="font-semibold text-xs text-gray-800 truncate">
-                  {detection.label}
+                  {detection.class}
                 </p>
                 <p className="text-xs text-gray-500">
                   {Math.round(detection.confidence * 100)}%
@@ -85,42 +67,14 @@ export default function DetectionResults({
 }
 
 function DetectionThumbnail({ imageUrl, detection }: { imageUrl: string; detection: Detection }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Use the base64 cropped image from the API
+  const croppedImageSrc = `data:image/jpeg;base64,${detection.cropped_image}`;
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-
-    img.onload = () => {
-      const { x, y, width, height } = detection.bbox;
-
-      canvas.width = 200;
-      canvas.height = 200;
-
-      const scale = Math.min(200 / width, 200 / height);
-      const scaledWidth = width * scale;
-      const scaledHeight = height * scale;
-      const offsetX = (200 - scaledWidth) / 2;
-      const offsetY = (200 - scaledHeight) / 2;
-
-      ctx.fillStyle = '#f3f4f6';
-      ctx.fillRect(0, 0, 200, 200);
-
-      ctx.drawImage(
-        img,
-        x, y, width, height,
-        offsetX, offsetY, scaledWidth, scaledHeight
-      );
-    };
-
-    img.src = imageUrl;
-  }, [imageUrl, detection]);
-
-  return <canvas ref={canvasRef} className="w-full h-full object-cover" />;
+  return (
+    <img
+      src={croppedImageSrc}
+      alt={detection.class}
+      className="w-full h-full object-cover"
+    />
+  );
 }
