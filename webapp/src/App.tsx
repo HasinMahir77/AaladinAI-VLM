@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye } from 'lucide-react';
+import { Eye, X } from 'lucide-react';
 import ImageUpload from './components/ImageUpload';
 import DetectionCanvas from './components/DetectionCanvas';
 import DetectionResults from './components/DetectionResults';
@@ -129,11 +129,28 @@ function App() {
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-lg p-6">
               <h2 className="text-xl font-bold text-gray-800 mb-4">Image Upload</h2>
-              <ImageUpload
-                onImageSelected={handleImageSelected}
-                currentImage={imageUrl}
-                onRemoveImage={handleRemoveImage}
-              />
+              {imageUrl && detections.length > 0 ? (
+                <div className="relative">
+                  <DetectionCanvas
+                    imageUrl={imageUrl}
+                    detections={detections}
+                    selectedDetectionId={selectedDetectionId}
+                  />
+                  <button
+                    onClick={handleRemoveImage}
+                    className="absolute top-2 right-2 bg-white hover:bg-red-50 text-red-600 p-1.5 rounded-full shadow-lg transition-all duration-200 hover:scale-110"
+                    title="Change image"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              ) : (
+                <ImageUpload
+                  onImageSelected={handleImageSelected}
+                  currentImage={imageUrl}
+                  onRemoveImage={handleRemoveImage}
+                />
+              )}
 
               {imageUrl && !detections.length && (
                 <div className="mt-4 text-center">
@@ -161,12 +178,6 @@ function App() {
             {detections.length > 0 && (
               <div className="bg-white rounded-xl shadow-lg p-6">
                 <h2 className="text-xl font-bold text-gray-800 mb-4">Detection Results</h2>
-                <DetectionCanvas
-                  imageUrl={imageUrl}
-                  detections={detections}
-                  selectedDetectionId={selectedDetectionId}
-                />
-
                 <DetectionResults
                   imageUrl={imageUrl}
                   detections={detections}
