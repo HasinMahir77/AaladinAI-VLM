@@ -58,6 +58,15 @@ print("YOLO model loaded on CPU")
 
 SYSTEM_PROMPT = "Describe this image in detail. Focus primarily on the main subject, including its appearance, actions, and notable features. Also describe the background and overall scene context."
 
+CONVERSATION_SYSTEM_PROMPT = """You are having a conversation about this image. Answer the current question based on what you see in the image and the conversation history provided.
+
+Important guidelines:
+- If the user provides corrections or new information in the conversation, acknowledge and use that information in your responses
+- Base your answers on visual evidence from the image first
+- Be specific and reference actual visual details you can see
+- If you're unsure about something or can't see it clearly, say so rather than guessing
+- Keep answers concise but informative"""
+
 # Request models
 class ChatRequest(BaseModel):
     session_id: str
@@ -77,8 +86,9 @@ def build_conversation_context(history: list, current_message: str, max_messages
     # Keep only last N messages (sliding window)
     recent_history = history[-max_messages:] if len(history) > max_messages else history
 
-    # Format conversation history
-    context_parts = []
+    # Format conversation history with system instructions
+    context_parts = [CONVERSATION_SYSTEM_PROMPT, ""]  # Add system prompt at the beginning
+
     if recent_history:
         context_parts.append("Previous conversation:")
         for msg in recent_history:
