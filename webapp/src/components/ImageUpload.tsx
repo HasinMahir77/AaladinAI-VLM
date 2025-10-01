@@ -52,8 +52,13 @@ export default function ImageUpload({ onImageSelected, currentImage, onRemoveIma
       return;
     }
 
-    const imageUrl = URL.createObjectURL(file);
-    onImageSelected(file, imageUrl);
+    try {
+      const imageUrl = URL.createObjectURL(file);
+      onImageSelected(file, imageUrl);
+    } catch (error) {
+      console.error('Error creating object URL:', error);
+      alert('Error processing image file. Please try a different image.');
+    }
   };
 
   const handleClick = () => {
@@ -63,24 +68,68 @@ export default function ImageUpload({ onImageSelected, currentImage, onRemoveIma
   const handleUrlSubmit = async () => {
     if (!urlInput.trim()) return;
 
+    // Validate URL format
+    let validUrl: URL;
+    try {
+      validUrl = new URL(urlInput.trim());
+
+      // Check for valid protocol
+      if (!['http:', 'https:'].includes(validUrl.protocol)) {
+        alert('Please use a valid HTTP or HTTPS URL');
+        setIsLoadingUrl(false);
+        return;
+      }
+    } catch (error) {
+      alert('Invalid URL format. Please enter a valid URL (e.g., https://example.com/image.jpg)');
+      console.error('URL validation error:', error);
+      return;
+    }
+
     setIsLoadingUrl(true);
     try {
-      const response = await fetch(urlInput);
-      if (!response.ok) throw new Error('Failed to fetch image');
+      // Use validated URL string
+      const response = await fetch(validUrl.toString(), {
+        mode: 'cors',
+        signal: AbortSignal.timeout(10000) // 10 second timeout
+      });
 
-      const blob = await response.blob();
-      if (!blob.type.startsWith('image/')) {
-        alert('URL does not point to a valid image');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.startsWith('image/')) {
+        alert('URL does not point to a valid image. Please use a direct image URL.');
+        setIsLoadingUrl(false);
         return;
       }
 
-      const file = new File([blob], 'url-image.jpg', { type: blob.type });
+      const blob = await response.blob();
+
+      // Validate blob size
+      if (blob.size > 10 * 1024 * 1024) {
+        alert('Image size should be less than 10MB');
+        setIsLoadingUrl(false);
+        return;
+      }
+
+      // Create file with safe name
+      const fileName = validUrl.pathname.split('/').pop() || 'url-image.jpg';
+      const file = new File([blob], fileName, { type: blob.type });
       const imageUrl = URL.createObjectURL(file);
       onImageSelected(file, imageUrl);
       setUrlInput('');
     } catch (error) {
-      alert('Failed to load image from URL. Please check the URL and try again.');
-      console.error(error);
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        alert('CORS error: This website doesn\'t allow direct image loading from browsers. Try:\n1. Download the image and upload it as a file\n2. Use a different image hosting service (e.g., Imgur, GitHub)');
+      } else if (error instanceof DOMException && error.name === 'TimeoutError') {
+        alert('Request timeout: The image took too long to load. Please try again.');
+      } else if (error instanceof Error) {
+        alert(`Failed to load image: ${error.message}`);
+      } else {
+        alert('Failed to load image from URL. Please check the URL and try again.');
+      }
+      console.error('Image URL loading error:', error);
     } finally {
       setIsLoadingUrl(false);
     }
@@ -93,6 +142,13 @@ export default function ImageUpload({ onImageSelected, currentImage, onRemoveIma
           src={currentImage}
           alt="Uploaded preview"
           className="w-full h-auto max-h-80 object-contain rounded-lg shadow-md"
+          onError={(e) => {
+            console.error('Error loading image preview');
+            if (onRemoveImage) {
+              alert('Error loading image. Please try again with a different image.');
+              onRemoveImage();
+            }
+          }}
         />
         <button
           onClick={onRemoveImage}

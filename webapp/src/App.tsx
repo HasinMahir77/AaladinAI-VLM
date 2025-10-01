@@ -30,7 +30,11 @@ function App() {
 
   const handleRemoveImage = () => {
     if (imageUrl) {
-      URL.revokeObjectURL(imageUrl);
+      try {
+        URL.revokeObjectURL(imageUrl);
+      } catch (error) {
+        console.error('Error revoking object URL:', error);
+      }
     }
     setImageFile(null);
     setImageUrl('');
@@ -134,6 +138,11 @@ function App() {
                     src={annotatedImageUrl}
                     alt="Detection preview with bounding boxes"
                     className="w-full h-auto max-h-80 object-contain rounded-lg shadow-md"
+                    onError={(e) => {
+                      console.error('Error loading annotated image');
+                      alert('Error loading detection results. Please try detecting again.');
+                      setAnnotatedImageUrl('');
+                    }}
                   />
                   <button
                     onClick={handleRemoveImage}
