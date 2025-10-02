@@ -13,6 +13,13 @@ import cv2
 import uuid
 from pydantic import BaseModel
 
+# Check if flash-attn is available
+try:
+    import flash_attn
+    FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    FLASH_ATTN_AVAILABLE = False
+
 app = FastAPI(title="VLM Image Description API")
 
 # Session storage for encoded images
@@ -48,13 +55,33 @@ if device == "cuda":
         bnb_4bit_quant_type="nf4"
     )
 
-    # Load model with 4-bit quantization
-    model = AutoModelForVision2Seq.from_pretrained(
-        model_id,
-        quantization_config=quantization_config,
-        device_map="auto"
-    )
-    print(f"Model loaded on {device} with 4-bit quantization")
+    # Try to load model with Flash Attention 2 if available, fallback to standard attention
+    if FLASH_ATTN_AVAILABLE:
+        try:
+            model = AutoModelForVision2Seq.from_pretrained(
+                model_id,
+                quantization_config=quantization_config,
+                device_map="auto",
+                attn_implementation="flash_attention_2"
+            )
+            print(f"Model loaded on {device} with 4-bit quantization and Flash Attention 2")
+        except Exception as e:
+            print(f"Flash Attention 2 failed to load: {e}")
+            print(f"Loading with standard attention")
+            model = AutoModelForVision2Seq.from_pretrained(
+                model_id,
+                quantization_config=quantization_config,
+                device_map="auto"
+            )
+            print(f"Model loaded on {device} with 4-bit quantization (standard attention)")
+    else:
+        print("Flash Attention not installed, using standard attention")
+        model = AutoModelForVision2Seq.from_pretrained(
+            model_id,
+            quantization_config=quantization_config,
+            device_map="auto"
+        )
+        print(f"Model loaded on {device} with 4-bit quantization (standard attention)")
 else:
     # Load model without quantization for CPU/MPS
     model = AutoModelForVision2Seq.from_pretrained(
@@ -142,11 +169,14 @@ def generate_response(image: Image.Image, prompt: str) -> str:
 
     inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
 
-    # Generate response
+    # Generate response with optimized parameters
     with torch.no_grad():
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=512
+            max_new_tokens=256,
+            do_sample=False,
+            num_beams=1,
+            use_cache=True
         )
 
     # Trim input tokens from generated output
