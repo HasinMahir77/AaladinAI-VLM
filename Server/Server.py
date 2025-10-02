@@ -413,7 +413,7 @@ async def describe_image(file: UploadFile = File(...)):
 async def detect_objects(file: UploadFile = File(...)):
     """
     Upload an image and get object detection results.
-    Returns detected people and vehicles with cropped bounding box images.
+    Returns detected vehicles (classes 1-8) with cropped bounding box images.
     """
     try:
         request_start = time.time()
@@ -430,10 +430,10 @@ async def detect_objects(file: UploadFile = File(...)):
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        # COCO class IDs for people and vehicles
-        # 0: person, 1: bicycle, 2: car, 3: motorcycle, 4: airplane,
+        # COCO class IDs for vehicles (classes 1-8)
+        # 1: bicycle, 2: car, 3: motorcycle, 4: airplane,
         # 5: bus, 6: train, 7: truck, 8: boat
-        target_classes = {0, 1, 2, 3, 4, 5, 6, 7, 8}
+        target_classes = {1, 2, 3, 4, 5, 6, 7, 8}
 
         # Run YOLO detection
         step_start = time.time()
@@ -450,7 +450,7 @@ async def detect_objects(file: UploadFile = File(...)):
             for box in boxes:
                 cls_id = int(box.cls[0])
 
-                # Only process people and vehicles
+                # Only process vehicles (classes 1-8)
                 if cls_id in target_classes:
                     # Get bounding box coordinates
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
@@ -520,7 +520,7 @@ async def root():
         "endpoints": {
             "/start-chat": "POST - Start chat session with image (returns session_id)",
             "/chat": "POST - Send message to existing session",
-            "/detect": "POST - Detect people and vehicles",
+            "/detect": "POST - Detect vehicles (classes 1-8)",
             "/describe": "POST - Get image description (legacy)"
         },
         "device": device,
