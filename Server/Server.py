@@ -98,7 +98,7 @@ processor = AutoProcessor.from_pretrained(model_id, min_pixels=256*28*28, max_pi
 
 # Load YOLO model on CPU
 print("Loading YOLO model...")
-yolo_model = YOLO("yolo12m.pt").to("cpu")
+yolo_model = YOLO("yolo12s.pt").to("cpu")
 print("YOLO model loaded on CPU")
 
 SYSTEM_PROMPT = "Describe this image in detail. Focus primarily on the main subject, including its appearance, actions, and notable features. Also describe the background and overall scene context."
