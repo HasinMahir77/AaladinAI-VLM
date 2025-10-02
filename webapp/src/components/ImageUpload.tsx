@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Upload, X, Link } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Upload, X, Link, Camera } from 'lucide-react';
 
 interface ImageUploadProps {
   onImageSelected: (file: File, imageUrl: string) => void;
@@ -10,9 +10,15 @@ interface ImageUploadProps {
 export default function ImageUpload({ onImageSelected, currentImage, onRemoveImage }: ImageUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [useUrl, setUseUrl] = useState(false);
+  const [useCamera, setUseCamera] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [isLoadingUrl, setIsLoadingUrl] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -64,6 +70,79 @@ export default function ImageUpload({ onImageSelected, currentImage, onRemoveIma
   const handleClick = () => {
     fileInputRef.current?.click();
   };
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode }
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        setIsCameraActive(true);
+      }
+    } catch (error) {
+      console.error('Camera access error:', error);
+      alert('Unable to access camera. Please check permissions and try again.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraActive(false);
+  };
+
+  const switchCamera = async () => {
+    stopCamera();
+    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+    setTimeout(() => startCamera(), 100);
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0);
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+
+      const file = new File([blob], `camera-capture-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const imageUrl = URL.createObjectURL(file);
+      onImageSelected(file, imageUrl);
+      stopCamera();
+      setUseCamera(false);
+    }, 'image/jpeg', 0.95);
+  };
+
+  useEffect(() => {
+    if (useCamera && !isCameraActive) {
+      startCamera();
+    } else if (!useCamera && isCameraActive) {
+      stopCamera();
+    }
+  }, [useCamera]);
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
 
   const handleUrlSubmit = async () => {
     if (!urlInput.trim()) return;
@@ -165,20 +244,42 @@ export default function ImageUpload({ onImageSelected, currentImage, onRemoveIma
     <div className="space-y-4">
       <div className="flex gap-2 border-b border-gray-200 pb-2">
         <button
-          onClick={() => setUseUrl(false)}
+          onClick={() => {
+            setUseUrl(false);
+            setUseCamera(false);
+          }}
           className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
-            !useUrl
+            !useUrl && !useCamera
               ? 'bg-blue-500 text-white'
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
         >
           <div className="flex items-center justify-center gap-2">
             <Upload size={18} />
-            Upload File
+            Upload
           </div>
         </button>
         <button
-          onClick={() => setUseUrl(true)}
+          onClick={() => {
+            setUseUrl(false);
+            setUseCamera(true);
+          }}
+          className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
+            useCamera
+              ? 'bg-blue-500 text-white'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          <div className="flex items-center justify-center gap-2">
+            <Camera size={18} />
+            Camera
+          </div>
+        </button>
+        <button
+          onClick={() => {
+            setUseUrl(true);
+            setUseCamera(false);
+          }}
           className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
             useUrl
               ? 'bg-blue-500 text-white'
@@ -187,12 +288,49 @@ export default function ImageUpload({ onImageSelected, currentImage, onRemoveIma
         >
           <div className="flex items-center justify-center gap-2">
             <Link size={18} />
-            Use URL
+            URL
           </div>
         </button>
       </div>
 
-      {useUrl ? (
+      {useCamera ? (
+        <div className="space-y-3">
+          <div className="relative bg-black rounded-lg overflow-hidden">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className="w-full h-auto"
+              style={{ maxHeight: '400px' }}
+            />
+            <canvas ref={canvasRef} className="hidden" />
+          </div>
+
+          {isCameraActive ? (
+            <div className="flex gap-2">
+              <button
+                onClick={capturePhoto}
+                className="flex-1 px-6 py-3 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition-all flex items-center justify-center gap-2"
+              >
+                <Camera size={20} />
+                Capture Photo
+              </button>
+              <button
+                onClick={switchCamera}
+                className="px-6 py-3 bg-gray-500 text-white font-semibold rounded-lg hover:bg-gray-600 transition-all"
+                title="Switch Camera"
+              >
+                🔄
+              </button>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-600 mb-3">Starting camera...</p>
+              <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+            </div>
+          )}
+        </div>
+      ) : useUrl ? (
         <div className="space-y-3">
           <div className="flex gap-2">
             <input
