@@ -5,4 +5,8 @@ transformers
 pillow
 ultralytics
 torch
+torchvision
 opencv-python
+bitsandbytes
+accelerate
+qwen-vl-utils
