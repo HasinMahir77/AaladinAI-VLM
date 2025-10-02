@@ -435,9 +435,9 @@ async def detect_objects(file: UploadFile = File(...)):
         # 5: bus, 6: train, 7: truck, 8: boat
         target_classes = {1, 2, 3, 4, 5, 6, 7, 8}
 
-        # Run YOLO detection
+        # Run YOLO detection with class filtering
         step_start = time.time()
-        results = yolo_model(image)
+        results = yolo_model(image, classes=list(target_classes))
         detection_time = time.time() - step_start
         print(f"[2] YOLO detection: {detection_time:.3f}s")
 
@@ -450,27 +450,25 @@ async def detect_objects(file: UploadFile = File(...)):
             for box in boxes:
                 cls_id = int(box.cls[0])
 
-                # Only process vehicles (classes 1-8)
-                if cls_id in target_classes:
-                    # Get bounding box coordinates
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    confidence = float(box.conf[0])
-                    class_name = result.names[cls_id]
+                # Get bounding box coordinates
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                confidence = float(box.conf[0])
+                class_name = result.names[cls_id]
 
-                    # Crop the bounding box region
-                    cropped = image.crop((x1, y1, x2, y2))
+                # Crop the bounding box region
+                cropped = image.crop((x1, y1, x2, y2))
 
-                    # Convert cropped image to base64
-                    buffered = io.BytesIO()
-                    cropped.save(buffered, format="JPEG")
-                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                # Convert cropped image to base64
+                buffered = io.BytesIO()
+                cropped.save(buffered, format="JPEG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
 
-                    detections.append({
-                        "class": class_name,
-                        "class_id": cls_id,
-                        "confidence": confidence,
-                        "cropped_image": img_str
-                    })
+                detections.append({
+                    "class": class_name,
+                    "class_id": cls_id,
+                    "confidence": confidence,
+                    "cropped_image": img_str
+                })
 
         # Generate annotated image with bounding boxes using YOLO's plot method
         annotated_frame = results[0].plot()  # Returns numpy array with boxes drawn
