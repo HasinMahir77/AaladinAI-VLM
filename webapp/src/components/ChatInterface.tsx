@@ -32,7 +32,7 @@ export default function ChatInterface({ onSendMessage, messages, isLoading, disa
         <div className="flex items-center gap-3">
           <Bot size={20} />
           <div>
-            <h2 className="text-lg font-bold">VLM Description</h2>
+            <h2 className="text-lg font-bold">Ask Qwen</h2>
             <p className="text-xs text-blue-50">AI-generated description of detected object</p>
           </div>
         </div>

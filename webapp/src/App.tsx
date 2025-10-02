@@ -84,6 +84,15 @@ function App() {
     const selectedDetection = detections.find(d => d.id === id);
     if (!selectedDetection) return;
 
+    // Add user prompt before fetching description
+    const userPrompt: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: 'Describe the image',
+      timestamp: Date.now()
+    };
+    setMessages([userPrompt]);
+
     setIsLoadingResponse(true);
 
     try {
@@ -92,22 +101,22 @@ function App() {
       setCurrentSessionId(sessionId);
 
       const assistantMessage: ChatMessage = {
-        id: Date.now().toString(),
+        id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: description,
         timestamp: Date.now()
       };
 
-      setMessages([assistantMessage]);
+      setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Failed to start chat session:', error);
       const errorMessage: ChatMessage = {
-        id: Date.now().toString(),
+        id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: 'Sorry, I encountered an error starting the chat session. Please try again.',
         timestamp: Date.now()
       };
-      setMessages([errorMessage]);
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoadingResponse(false);
     }
@@ -163,11 +172,11 @@ function App() {
               <Eye size={24} className="text-white" />
             </div>
             <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent">
-              YOLO v12 with VLM
+              YOLO v12 with Qwen 2.5
             </h1>
           </div>
           <p className="text-gray-600">
-            Upload an image, detect people/vehicles, and get a detailed description of the image.
+            Upload an image, detect people/vehicles, and chat with Qwen 2.5.
           </p>
         </header>
 
