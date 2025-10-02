@@ -1,7 +1,7 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 from qwen_vl_utils import process_vision_info
 from PIL import Image
 from ultralytics import YOLO
@@ -58,7 +58,7 @@ if device == "cuda":
     # Try to load model with Flash Attention 2 if available, fallback to standard attention
     if FLASH_ATTN_AVAILABLE:
         try:
-            model = AutoModelForVision2Seq.from_pretrained(
+            model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
                 quantization_config=quantization_config,
                 device_map="auto",
@@ -68,7 +68,7 @@ if device == "cuda":
         except Exception as e:
             print(f"Flash Attention 2 failed to load: {e}")
             print(f"Loading with standard attention")
-            model = AutoModelForVision2Seq.from_pretrained(
+            model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
                 quantization_config=quantization_config,
                 device_map="auto"
@@ -76,7 +76,7 @@ if device == "cuda":
             print(f"Model loaded on {device} with 4-bit quantization (standard attention)")
     else:
         print("Flash Attention not installed, using standard attention")
-        model = AutoModelForVision2Seq.from_pretrained(
+        model = AutoModelForImageTextToText.from_pretrained(
             model_id,
             quantization_config=quantization_config,
             device_map="auto"
@@ -84,7 +84,7 @@ if device == "cuda":
         print(f"Model loaded on {device} with 4-bit quantization (standard attention)")
 else:
     # Load model without quantization for CPU/MPS
-    model = AutoModelForVision2Seq.from_pretrained(
+    model = AutoModelForImageTextToText.from_pretrained(
         model_id,
         torch_dtype=torch.float16 if device == "mps" else torch.float32,
         device_map="auto"
@@ -101,7 +101,7 @@ print("Loading YOLO model...")
 yolo_model = YOLO("yolo12s.pt").to("cpu")
 print("YOLO model loaded on CPU")
 
-SYSTEM_PROMPT = "Describe this image in detail. Focus primarily on the main subject, including its appearance, actions, and notable features. Also describe the background and overall scene context."
+SYSTEM_PROMPT = "Describe this image in detail. Focus primarily on the main subject, including its appearance, actions, and notable features. Also describe the background and overall scene context. Keep your response short and concise."
 
 CONVERSATION_SYSTEM_PROMPT = """You are having a conversation about this image. Answer the current question based on what you see in the image and the conversation history provided.
 
@@ -413,7 +413,7 @@ async def describe_image(file: UploadFile = File(...)):
 async def detect_objects(file: UploadFile = File(...)):
     """
     Upload an image and get object detection results.
-    Returns detected vehicles (classes 1-8) with cropped bounding box images.
+    Returns detected vehicles (classes 0-7) with cropped bounding box images.
     """
     try:
         request_start = time.time()
@@ -433,7 +433,7 @@ async def detect_objects(file: UploadFile = File(...)):
         # COCO class IDs for vehicles (classes 1-8)
         # 1: bicycle, 2: car, 3: motorcycle, 4: airplane,
         # 5: bus, 6: train, 7: truck, 8: boat
-        target_classes = {1, 2, 3, 4, 5, 6, 7, 8}
+        target_classes = {0, 1, 2, 3, 4, 5, 6, 7}
 
         # Run YOLO detection with class filtering
         step_start = time.time()
@@ -518,7 +518,7 @@ async def root():
         "endpoints": {
             "/start-chat": "POST - Start chat session with image (returns session_id)",
             "/chat": "POST - Send message to existing session",
-            "/detect": "POST - Detect vehicles (classes 1-8)",
+            "/detect": "POST - Detect vehicles (classes 0-7)",
             "/describe": "POST - Get image description (legacy)"
         },
         "device": device,
