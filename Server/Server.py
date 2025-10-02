@@ -1,7 +1,8 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+from qwen_vl_utils import process_vision_info
 from PIL import Image
 from ultralytics import YOLO
 import torch
@@ -27,8 +28,8 @@ app.add_middleware(
 )
 
 # Load model at startup
-print("Loading Moondream2 model...")
-model_id = "vikhyatk/moondream2"
+print("Loading Qwen2.5-VL-7B model with 4-bit quantization...")
+model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 # Determine device
 if torch.cuda.is_available():
@@ -38,18 +39,35 @@ elif torch.backends.mps.is_available():
 else:
     device = "cpu"
 
-# Load with float16 for faster inference
-model = AutoModelForCausalLM.from_pretrained(
-    model_id,
-    trust_remote_code=True,
-    torch_dtype=torch.float16
-).to(device)
+# Configure 4-bit quantization using bitsandbytes
+if device == "cuda":
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4"
+    )
+
+    # Load model with 4-bit quantization
+    model = AutoModelForVision2Seq.from_pretrained(
+        model_id,
+        quantization_config=quantization_config,
+        device_map="auto"
+    )
+    print(f"Model loaded on {device} with 4-bit quantization")
+else:
+    # Load model without quantization for CPU/MPS
+    model = AutoModelForVision2Seq.from_pretrained(
+        model_id,
+        torch_dtype=torch.float16 if device == "mps" else torch.float32,
+        device_map="auto"
+    )
+    print(f"Model loaded on {device} (quantization only available on CUDA)")
 
 model.eval()
-torch.set_grad_enabled(False)
 
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-print(f"Model loaded on {device} with float16")
+# Load processor (replaces tokenizer for Qwen2-VL)
+processor = AutoProcessor.from_pretrained(model_id, min_pixels=256*28*28, max_pixels=512*28*28)
 
 # Load YOLO model on CPU
 print("Loading YOLO model...")
@@ -77,6 +95,73 @@ def downscale_image(image: Image.Image, max_size: int = 512) -> Image.Image:
     if max(image.size) > max_size:
         image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
     return image
+
+def generate_response(image: Image.Image, prompt: str) -> str:
+    """
+    Generate a response using Qwen2.5-VL model.
+    Args:
+        image: PIL Image object
+        prompt: Text prompt/question about the image
+    Returns:
+        Generated text response
+    """
+    # Prepare messages in Qwen2-VL format
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": prompt}
+            ]
+        }
+    ]
+
+    # Apply chat template
+    text = processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+
+    # Process vision information
+    image_inputs, video_inputs = process_vision_info(messages)
+
+    # Prepare inputs for the model
+    inputs = processor(
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt"
+    )
+
+    # Move inputs to the correct device
+    # For models with device_map, get the device from the first parameter
+    if hasattr(model, 'hf_device_map'):
+        device = next(model.parameters()).device
+    else:
+        device = model.device
+
+    inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+
+    # Generate response
+    with torch.no_grad():
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=512
+        )
+
+    # Trim input tokens from generated output
+    generated_ids_trimmed = [
+        out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
+    ]
+
+    # Decode the response
+    response = processor.batch_decode(
+        generated_ids_trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False
+    )[0]
+
+    return response
 
 def build_conversation_context(history: list, current_message: str, max_messages: int = 20) -> str:
     """
@@ -106,7 +191,7 @@ async def start_chat_session(file: UploadFile = File(...)):
     """
     Start a new chat session by uploading an image.
     Returns a session_id and initial description.
-    The encoded image is cached for follow-up questions.
+    The image is cached for follow-up questions.
     """
     try:
         request_start = time.time()
@@ -133,25 +218,19 @@ async def start_chat_session(file: UploadFile = File(...)):
         image = downscale_image(image)
         print(f"[3] Downscaling: {time.time() - step_start:.3f}s | {original_size} -> {image.size}")
 
-        # Encode image and store in session
-        step_start = time.time()
-        enc_image = model.encode_image(image)
-        encode_time = time.time() - step_start
-        print(f"[4] Image encoding: {encode_time:.3f}s")
-
-        # Generate session ID and store encoded image with empty history
+        # Generate session ID and store image with empty history
         session_id = str(uuid.uuid4())
         sessions[session_id] = {
-            "enc_image": enc_image,
+            "image": image,
             "history": []
         }
-        print(f"[5] Session created: {session_id}")
+        print(f"[4] Session created: {session_id}")
 
         # Generate initial description
         step_start = time.time()
-        description = model.answer_question(enc_image, SYSTEM_PROMPT, tokenizer)
+        description = generate_response(image, SYSTEM_PROMPT)
         generation_time = time.time() - step_start
-        print(f"[6] Initial description generated: {generation_time:.3f}s")
+        print(f"[5] Initial description generated: {generation_time:.3f}s")
 
         total_time = time.time() - request_start
         print(f"\nTotal request time: {total_time:.3f}s")
@@ -164,14 +243,15 @@ async def start_chat_session(file: UploadFile = File(...)):
             "image_size": image.size,
             "device": device,
             "timing": {
-                "encoding_time": f"{encode_time:.3f}s",
                 "generation_time": f"{generation_time:.3f}s",
                 "total_time": f"{total_time:.3f}s"
             }
         })
 
     except Exception as e:
+        import traceback
         print(f"ERROR: {str(e)}")
+        print(traceback.format_exc())
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
@@ -198,7 +278,7 @@ async def chat_with_image(request: ChatRequest):
             )
 
         session_data = sessions[request.session_id]
-        enc_image = session_data["enc_image"]
+        image = session_data["image"]
         history = session_data["history"]
 
         # Build conversation context with history
@@ -209,7 +289,7 @@ async def chat_with_image(request: ChatRequest):
 
         # Generate response with context
         step_start = time.time()
-        response = model.answer_question(enc_image, context, tokenizer)
+        response = generate_response(image, context)
         generation_time = time.time() - step_start
         print(f"[2] Response generated: {generation_time:.3f}s")
 
@@ -231,7 +311,9 @@ async def chat_with_image(request: ChatRequest):
         })
 
     except Exception as e:
+        import traceback
         print(f"ERROR: {str(e)}")
+        print(traceback.format_exc())
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
@@ -268,17 +350,11 @@ async def describe_image(file: UploadFile = File(...)):
         image = downscale_image(image)
         print(f"[3] Downscaling: {time.time() - step_start:.3f}s | {original_size} -> {image.size}")
 
-        # Encode image
-        step_start = time.time()
-        enc_image = model.encode_image(image)
-        encode_time = time.time() - step_start
-        print(f"[4] Image encoding: {encode_time:.3f}s")
-
         # Generate description
         step_start = time.time()
-        description = model.answer_question(enc_image, SYSTEM_PROMPT, tokenizer)
+        description = generate_response(image, SYSTEM_PROMPT)
         generation_time = time.time() - step_start
-        print(f"[5] Text generation: {generation_time:.3f}s")
+        print(f"[4] Text generation: {generation_time:.3f}s")
 
         total_time = time.time() - request_start
         print(f"\nTotal request time: {total_time:.3f}s")
@@ -289,14 +365,15 @@ async def describe_image(file: UploadFile = File(...)):
             "image_size": image.size,
             "device": device,
             "timing": {
-                "encoding_time": f"{encode_time:.3f}s",
                 "generation_time": f"{generation_time:.3f}s",
                 "total_time": f"{total_time:.3f}s"
             }
         })
 
     except Exception as e:
+        import traceback
         print(f"ERROR: {str(e)}")
+        print(traceback.format_exc())
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
@@ -398,7 +475,9 @@ async def detect_objects(file: UploadFile = File(...)):
         })
 
     except Exception as e:
+        import traceback
         print(f"ERROR: {str(e)}")
+        print(traceback.format_exc())
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
