@@ -1,24 +1,18 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
-from qwen_vl_utils import process_vision_info
 from PIL import Image
 from ultralytics import YOLO
-import torch
 import io
 import time
 import base64
 import cv2
 import uuid
 from pydantic import BaseModel
+from pathlib import Path
 
-# Check if flash-attn is available
-try:
-    import flash_attn
-    FLASH_ATTN_AVAILABLE = True
-except ImportError:
-    FLASH_ATTN_AVAILABLE = False
+# Import SmolVLM functions
+from vlm import load_smolvlm_model, generate_smolvlm_response
 
 app = FastAPI(title="VLM Image Description API")
 
@@ -34,67 +28,21 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
-# Load model at startup
-print("Loading Qwen2.5-VL-7B model with 4-bit quantization...")
-model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
+# Load SmolVLM model at startup
+print("=" * 80)
+print("Loading fine-tuned SmolVLM model...")
+print("=" * 80)
 
-# Determine device
-if torch.cuda.is_available():
-    device = "cuda"
-elif torch.backends.mps.is_available():
-    device = "mps"
-else:
-    device = "cpu"
+# Get the directory where Server.py is located
+SERVER_DIR = Path(__file__).parent.absolute()
+ADAPTER_PATH = SERVER_DIR / "finetuned_smolvlm" / "final"
 
-# Configure 4-bit quantization using bitsandbytes
-if device == "cuda":
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4"
-    )
+# Load model
+model, processor, device = load_smolvlm_model(str(ADAPTER_PATH))
 
-    # Try to load model with Flash Attention 2 if available, fallback to standard attention
-    if FLASH_ATTN_AVAILABLE:
-        try:
-            model = AutoModelForImageTextToText.from_pretrained(
-                model_id,
-                quantization_config=quantization_config,
-                device_map="auto",
-                attn_implementation="flash_attention_2"
-            )
-            print(f"Model loaded on {device} with 4-bit quantization and Flash Attention 2")
-        except Exception as e:
-            print(f"Flash Attention 2 failed to load: {e}")
-            print(f"Loading with standard attention")
-            model = AutoModelForImageTextToText.from_pretrained(
-                model_id,
-                quantization_config=quantization_config,
-                device_map="auto"
-            )
-            print(f"Model loaded on {device} with 4-bit quantization (standard attention)")
-    else:
-        print("Flash Attention not installed, using standard attention")
-        model = AutoModelForImageTextToText.from_pretrained(
-            model_id,
-            quantization_config=quantization_config,
-            device_map="auto"
-        )
-        print(f"Model loaded on {device} with 4-bit quantization (standard attention)")
-else:
-    # Load model without quantization for CPU/MPS
-    model = AutoModelForImageTextToText.from_pretrained(
-        model_id,
-        torch_dtype=torch.float16 if device == "mps" else torch.float32,
-        device_map="auto"
-    )
-    print(f"Model loaded on {device} (quantization only available on CUDA)")
-
-model.eval()
-
-# Load processor (replaces tokenizer for Qwen2-VL)
-processor = AutoProcessor.from_pretrained(model_id, min_pixels=256*28*28, max_pixels=512*28*28)
+print("=" * 80)
+print("✅ Model loaded and ready!")
+print("=" * 80)
 
 # Load YOLO model on CPU
 print("Loading YOLO model...")
@@ -125,73 +73,22 @@ def downscale_image(image: Image.Image, max_size: int = 512) -> Image.Image:
 
 def generate_response(image: Image.Image, prompt: str) -> str:
     """
-    Generate a response using Qwen2.5-VL model.
+    Generate a response using fine-tuned SmolVLM model.
     Args:
         image: PIL Image object
         prompt: Text prompt/question about the image
     Returns:
         Generated text response
     """
-    # Prepare messages in Qwen2-VL format
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": prompt}
-            ]
-        }
-    ]
-
-    # Apply chat template
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+    return generate_smolvlm_response(
+        model=model,
+        processor=processor,
+        image=image,
+        prompt=prompt,
+        device=device,
+        max_new_tokens=256,
+        do_sample=False
     )
-
-    # Process vision information
-    image_inputs, video_inputs = process_vision_info(messages)
-
-    # Prepare inputs for the model
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt"
-    )
-
-    # Move inputs to the correct device
-    # For models with device_map, get the device from the first parameter
-    if hasattr(model, 'hf_device_map'):
-        device = next(model.parameters()).device
-    else:
-        device = model.device
-
-    inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
-
-    # Generate response with optimized parameters
-    with torch.no_grad():
-        generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=256,
-            do_sample=False,
-            num_beams=1,
-            use_cache=True
-        )
-
-    # Trim input tokens from generated output
-    generated_ids_trimmed = [
-        out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
-    ]
-
-    # Decode the response
-    response = processor.batch_decode(
-        generated_ids_trimmed,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False
-    )[0]
-
-    return response
 
 def build_conversation_context(history: list, current_message: str, max_messages: int = 20) -> str:
     """
@@ -413,7 +310,7 @@ async def describe_image(file: UploadFile = File(...)):
 async def detect_objects(file: UploadFile = File(...)):
     """
     Upload an image and get object detection results.
-    Returns detected vehicles (classes 0-7) with cropped bounding box images.
+    Returns detected cats and dogs with cropped bounding box images.
     """
     try:
         request_start = time.time()
@@ -430,10 +327,9 @@ async def detect_objects(file: UploadFile = File(...)):
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        # COCO class IDs for vehicles (classes 1-8)
-        # 1: bicycle, 2: car, 3: motorcycle, 4: airplane,
-        # 5: bus, 6: train, 7: truck, 8: boat
-        target_classes = {0, 1, 2, 3, 4, 5, 6, 7}
+        # COCO class IDs for cats and dogs
+        # 15: cat, 16: dog
+        target_classes = {15, 16}
 
         # Run YOLO detection with class filtering
         step_start = time.time()
@@ -518,7 +414,7 @@ async def root():
         "endpoints": {
             "/start-chat": "POST - Start chat session with image (returns session_id)",
             "/chat": "POST - Send message to existing session",
-            "/detect": "POST - Detect vehicles (classes 0-7)",
+            "/detect": "POST - Detect cats and dogs (COCO classes 15-16)",
             "/describe": "POST - Get image description (legacy)"
         },
         "device": device,

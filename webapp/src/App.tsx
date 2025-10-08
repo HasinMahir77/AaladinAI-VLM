@@ -172,11 +172,11 @@ function App() {
               <Eye size={24} className="text-white" />
             </div>
             <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent">
-              YOLO v12 with Qwen 2.5
+              YOLO v12 with SmolVLM
             </h1>
           </div>
           <p className="text-gray-600">
-            Upload an image, detect people/vehicles, and chat with Qwen 2.5.
+            Upload an image, detect cats/dogs, and chat with SmolVLM.
           </p>
         </header>
 

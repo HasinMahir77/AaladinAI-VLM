@@ -56,3 +56,4 @@ node_modules/
 /dataset/training_set
 /train/finetuned_moondream
 /train/finetuned_smolvlm
+/Server/finetuned_smolvlm/
