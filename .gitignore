@@ -50,3 +50,8 @@ node_modules/
 # *.pt
 # *.pth
 # *.onnx
+/test_set
+/training_set
+/dataset/test_set
+/dataset/training_set
+/train/finetuned_moondream
