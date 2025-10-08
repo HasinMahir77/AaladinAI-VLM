@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 SmolVLM Fine-tuning Script using TRL SFTTrainer
-Train SmolVLM-500M on custom JSONL dataset with 4-bit quantization
+Train SmolVLM-500M on custom JSONL dataset
 """
 
 import json
@@ -12,7 +12,6 @@ from datasets import Dataset
 from transformers import (
     AutoModelForVision2Seq,
     AutoProcessor,
-    BitsAndBytesConfig,
 )
 from trl import SFTConfig, SFTTrainer
 from peft import LoraConfig
@@ -22,8 +21,7 @@ from peft import LoraConfig
 # ============================================================================
 
 # Model Configuration
-MODEL_NAME = "HuggingFaceTB/SmolVLM-Instruct"  # 500M params, very fast!
-# Alternative: "HuggingFaceTB/SmolVLM-Instruct" (2.2B) for better accuracy
+MODEL_NAME = "HuggingFaceTB/SmolVLM-Instruct"
 
 # Dataset Configuration
 DATASET_PATH = "../dataset/training_set/captions_subset_1000.jsonl"  # Using 1000 image subset for faster training
@@ -45,11 +43,6 @@ LORA_ALPHA = 8
 LORA_DROPOUT = 0.1
 LORA_TARGET_MODULES = ["down_proj", "o_proj", "k_proj", "q_proj", "gate_proj", "up_proj", "v_proj"]
 USE_DORA = False  # DoRA: improved version of LoRA
-
-# Quantization Configuration (4-bit for memory efficiency)
-USE_4BIT = False
-BNB_4BIT_COMPUTE_DTYPE = torch.bfloat16  # or torch.float16
-BNB_4BIT_QUANT_TYPE = "nf4"
 
 # Output Configuration
 OUTPUT_DIR = "./finetuned_smolvlm"
@@ -199,17 +192,6 @@ def main():
     print("\n📊 Loading and converting dataset...")
     train_dataset = load_and_convert_dataset(str(dataset_path), BASE_DIR)
 
-    # Configure quantization
-    bnb_config = None
-    if USE_4BIT and device == "cuda":
-        print("\n⚙️  Configuring 4-bit quantization...")
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type=BNB_4BIT_QUANT_TYPE,
-            bnb_4bit_compute_dtype=BNB_4BIT_COMPUTE_DTYPE,
-            bnb_4bit_use_double_quant=True,
-        )
-
     # Load processor
     print(f"\n📦 Loading processor from {MODEL_NAME}...")
     processor = AutoProcessor.from_pretrained(MODEL_NAME)
@@ -218,14 +200,11 @@ def main():
     print(f"📦 Loading model from {MODEL_NAME}...")
     model = AutoModelForVision2Seq.from_pretrained(
         MODEL_NAME,
-        quantization_config=bnb_config,
-        device_map="auto" if USE_4BIT and device == "cuda" else None,
-        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+        dtype=torch.bfloat16 if device == "cuda" else torch.float32,
         _attn_implementation="flash_attention_2" if device == "cuda" else "eager",
     )
 
-    if not (USE_4BIT and device == "cuda"):
-        model = model.to(device)
+    model = model.to(device)
 
     # Configure LoRA (matching official HF cookbook)
     lora_type = "DoRA" if USE_DORA else "LoRA"

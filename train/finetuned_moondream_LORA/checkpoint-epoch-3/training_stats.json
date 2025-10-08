@@ -1,8 +1,0 @@
-{
-  "epoch": 3,
-  "train_loss": 0.16235699446256424,
-  "val_loss": null,
-  "time": 2508.657489299774,
-  "global_step": 6003,
-  "learning_rate": 2.565965205215595e-05
-}

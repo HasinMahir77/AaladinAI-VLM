@@ -65,27 +65,22 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str
 
-def downscale_image(image: Image.Image, max_size: int = 512) -> Image.Image:
-    """Downscale image while maintaining aspect ratio"""
-    if max(image.size) > max_size:
-        image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+def process_image(contents: bytes) -> Image.Image:
+    """Read, convert to RGB, and downscale image"""
+    image = Image.open(io.BytesIO(contents))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    if max(image.size) > 512:
+        image.thumbnail((512, 512), Image.Resampling.LANCZOS)
     return image
 
 def generate_response(image: Image.Image, prompt: str) -> str:
-    """
-    Generate a response using fine-tuned SmolVLM model.
-    Args:
-        image: PIL Image object
-        prompt: Text prompt/question about the image
-    Returns:
-        Generated text response
-    """
+    """Generate a response using fine-tuned SmolVLM model"""
     return generate_smolvlm_response(
         model=model,
         processor=processor,
         image=image,
         prompt=prompt,
-        device=device,
         max_new_tokens=256,
         do_sample=False
     )
@@ -115,297 +110,158 @@ def build_conversation_context(history: list, current_message: str, max_messages
 
 @app.post("/start-chat")
 async def start_chat_session(file: UploadFile = File(...)):
-    """
-    Start a new chat session by uploading an image.
-    Returns a session_id and initial description.
-    The image is cached for follow-up questions.
-    """
+    """Start a new chat session by uploading an image"""
     try:
-        request_start = time.time()
-        print(f"\n{'='*50}")
-        print(f"New chat session request received")
+        start = time.time()
+        print(f"\n{'='*50}\nNew chat session request")
 
-        # Read and process image
-        step_start = time.time()
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        print(f"[1] Image read: {time.time() - step_start:.3f}s | Size: {image.size}")
+        # Process image
+        image = process_image(await file.read())
+        print(f"Image processed: {image.size}")
 
-        # Convert to RGB if needed
-        step_start = time.time()
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-            print(f"[2] RGB conversion: {time.time() - step_start:.3f}s")
-        else:
-            print(f"[2] RGB conversion: skipped (already RGB)")
-
-        # Downscale image
-        step_start = time.time()
-        original_size = image.size
-        image = downscale_image(image)
-        print(f"[3] Downscaling: {time.time() - step_start:.3f}s | {original_size} -> {image.size}")
-
-        # Generate session ID and store image with empty history
+        # Create session
         session_id = str(uuid.uuid4())
-        sessions[session_id] = {
-            "image": image,
-            "history": []
-        }
-        print(f"[4] Session created: {session_id}")
+        sessions[session_id] = {"image": image, "history": []}
 
         # Generate initial description
-        step_start = time.time()
+        gen_start = time.time()
         description = generate_response(image, SYSTEM_PROMPT)
-        generation_time = time.time() - step_start
-        print(f"[5] Initial description generated: {generation_time:.3f}s")
+        gen_time = time.time() - gen_start
 
-        total_time = time.time() - request_start
-        print(f"\nTotal request time: {total_time:.3f}s")
-        print(f"Active sessions: {len(sessions)}")
-        print(f"{'='*50}\n")
+        print(f"Generation: {gen_time:.3f}s | Total: {time.time() - start:.3f}s")
+        print(f"Active sessions: {len(sessions)}\n{'='*50}\n")
 
         return JSONResponse({
             "session_id": session_id,
             "description": description,
             "image_size": image.size,
             "device": device,
-            "timing": {
-                "generation_time": f"{generation_time:.3f}s",
-                "total_time": f"{total_time:.3f}s"
-            }
+            "timing": {"generation_time": f"{gen_time:.3f}s", "total_time": f"{time.time() - start:.3f}s"}
         })
 
     except Exception as e:
-        import traceback
-        print(f"ERROR: {str(e)}")
-        print(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        print(f"ERROR: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/chat")
 async def chat_with_image(request: ChatRequest):
-    """
-    Send a follow-up message about a previously uploaded image.
-    Requires a valid session_id from /start-chat.
-    """
+    """Send a follow-up message about a previously uploaded image"""
     try:
-        request_start = time.time()
-        print(f"\n{'='*50}")
-        print(f"Chat message received")
-        print(f"Session ID: {request.session_id}")
-        print(f"Message: {request.message}")
+        start = time.time()
+        print(f"\n{'='*50}\nChat: {request.message[:50]}...")
 
-        # Retrieve session data
+        # Retrieve session
         if request.session_id not in sessions:
-            return JSONResponse(
-                status_code=404,
-                content={"error": "Session not found. Please start a new chat session."}
-            )
+            return JSONResponse(status_code=404, content={"error": "Session not found"})
 
         session_data = sessions[request.session_id]
-        image = session_data["image"]
-        history = session_data["history"]
+        context = build_conversation_context(session_data["history"], request.message)
 
-        # Build conversation context with history
-        step_start = time.time()
-        context = build_conversation_context(history, request.message)
-        context_build_time = time.time() - step_start
-        print(f"[1] Context built with {len(history)} previous messages: {context_build_time:.3f}s")
+        # Generate response
+        gen_start = time.time()
+        response = generate_response(session_data["image"], context)
+        gen_time = time.time() - gen_start
 
-        # Generate response with context
-        step_start = time.time()
-        response = generate_response(image, context)
-        generation_time = time.time() - step_start
-        print(f"[2] Response generated: {generation_time:.3f}s")
+        # Update history
+        session_data["history"].extend([
+            {"role": "user", "content": request.message},
+            {"role": "assistant", "content": response}
+        ])
 
-        # Add user message and assistant response to history
-        session_data["history"].append({"role": "user", "content": request.message})
-        session_data["history"].append({"role": "assistant", "content": response})
-        print(f"[3] History updated: {len(session_data['history'])} total messages")
-
-        total_time = time.time() - request_start
-        print(f"\nTotal request time: {total_time:.3f}s")
-        print(f"{'='*50}\n")
+        print(f"Generation: {gen_time:.3f}s | Total: {time.time() - start:.3f}s")
+        print(f"History: {len(session_data['history'])} messages\n{'='*50}\n")
 
         return JSONResponse({
             "response": response,
-            "timing": {
-                "generation_time": f"{generation_time:.3f}s",
-                "total_time": f"{total_time:.3f}s"
-            }
+            "timing": {"generation_time": f"{gen_time:.3f}s", "total_time": f"{time.time() - start:.3f}s"}
         })
 
     except Exception as e:
-        import traceback
-        print(f"ERROR: {str(e)}")
-        print(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        print(f"ERROR: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/describe")
 async def describe_image(file: UploadFile = File(...)):
-    """
-    Upload an image and get a detailed description (legacy endpoint).
-    For interactive chat, use /start-chat and /chat instead.
-    """
+    """Get image description (legacy endpoint)"""
     try:
-        request_start = time.time()
-        print(f"\n{'='*50}")
-        print(f"New request received")
+        start = time.time()
+        print(f"\n{'='*50}\nDescribe request")
 
-        # Read and process image
-        step_start = time.time()
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        print(f"[1] Image read: {time.time() - step_start:.3f}s | Size: {image.size}")
-
-        # Convert to RGB if needed
-        step_start = time.time()
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-            print(f"[2] RGB conversion: {time.time() - step_start:.3f}s")
-        else:
-            print(f"[2] RGB conversion: skipped (already RGB)")
-
-        # Downscale image
-        step_start = time.time()
-        original_size = image.size
-        image = downscale_image(image)
-        print(f"[3] Downscaling: {time.time() - step_start:.3f}s | {original_size} -> {image.size}")
-
-        # Generate description
-        step_start = time.time()
+        # Process image and generate description
+        image = process_image(await file.read())
+        gen_start = time.time()
         description = generate_response(image, SYSTEM_PROMPT)
-        generation_time = time.time() - step_start
-        print(f"[4] Text generation: {generation_time:.3f}s")
+        gen_time = time.time() - gen_start
 
-        total_time = time.time() - request_start
-        print(f"\nTotal request time: {total_time:.3f}s")
-        print(f"{'='*50}\n")
+        print(f"Generation: {gen_time:.3f}s | Total: {time.time() - start:.3f}s\n{'='*50}\n")
 
         return JSONResponse({
             "description": description,
             "image_size": image.size,
             "device": device,
-            "timing": {
-                "generation_time": f"{generation_time:.3f}s",
-                "total_time": f"{total_time:.3f}s"
-            }
+            "timing": {"generation_time": f"{gen_time:.3f}s", "total_time": f"{time.time() - start:.3f}s"}
         })
 
     except Exception as e:
-        import traceback
-        print(f"ERROR: {str(e)}")
-        print(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        print(f"ERROR: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/detect")
 async def detect_objects(file: UploadFile = File(...)):
-    """
-    Upload an image and get object detection results.
-    Returns detected cats and dogs with cropped bounding box images.
-    """
+    """Detect cats and dogs in image"""
     try:
-        request_start = time.time()
-        print(f"\n{'='*50}")
-        print(f"New detection request received")
+        start = time.time()
+        print(f"\n{'='*50}\nDetection request")
 
-        # Read and process image
-        step_start = time.time()
+        # Process image and run detection
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
-        print(f"[1] Image read: {time.time() - step_start:.3f}s | Size: {image.size}")
-
-        # Convert to RGB if needed
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        # COCO class IDs for cats and dogs
-        # 15: cat, 16: dog
-        target_classes = {15, 16}
-
-        # Run YOLO detection with class filtering
-        step_start = time.time()
-        results = yolo_model(image, classes=list(target_classes))
-        detection_time = time.time() - step_start
-        print(f"[2] YOLO detection: {detection_time:.3f}s")
+        # Run YOLO detection (class 15: cat, 16: dog)
+        det_start = time.time()
+        results = yolo_model(image, classes=[15, 16])
+        det_time = time.time() - det_start
 
         # Process detections
-        step_start = time.time()
         detections = []
-
         for result in results:
-            boxes = result.boxes
-            for box in boxes:
-                cls_id = int(box.cls[0])
-
-                # Get bounding box coordinates
+            for box in result.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                confidence = float(box.conf[0])
-                class_name = result.names[cls_id]
-
-                # Crop the bounding box region
                 cropped = image.crop((x1, y1, x2, y2))
 
-                # Convert cropped image to base64
                 buffered = io.BytesIO()
                 cropped.save(buffered, format="JPEG")
-                img_str = base64.b64encode(buffered.getvalue()).decode()
 
                 detections.append({
-                    "class": class_name,
-                    "class_id": cls_id,
-                    "confidence": confidence,
-                    "cropped_image": img_str
+                    "class": result.names[int(box.cls[0])],
+                    "class_id": int(box.cls[0]),
+                    "confidence": float(box.conf[0]),
+                    "cropped_image": base64.b64encode(buffered.getvalue()).decode()
                 })
 
-        # Generate annotated image with bounding boxes using YOLO's plot method
-        annotated_frame = results[0].plot()  # Returns numpy array with boxes drawn
+        # Generate annotated image
+        annotated_frame = results[0].plot()
+        annotated_pil = Image.fromarray(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB))
 
-        # Convert numpy array (BGR) to PIL Image (RGB)
-        annotated_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        annotated_pil = Image.fromarray(annotated_rgb)
-
-        # Convert annotated image to base64
         buffered = io.BytesIO()
         annotated_pil.save(buffered, format="JPEG")
         annotated_img_str = base64.b64encode(buffered.getvalue()).decode()
 
-        processing_time = time.time() - step_start
-        print(f"[3] Processing detections: {processing_time:.3f}s")
-
-        total_time = time.time() - request_start
-        print(f"\nTotal request time: {total_time:.3f}s")
-        print(f"Detections found: {len(detections)}")
-        print(f"{'='*50}\n")
+        print(f"Detection: {det_time:.3f}s | Found: {len(detections)} | Total: {time.time() - start:.3f}s\n{'='*50}\n")
 
         return JSONResponse({
             "detections": detections,
             "count": len(detections),
             "annotated_image": annotated_img_str,
             "image_size": {"width": image.size[0], "height": image.size[1]},
-            "timing": {
-                "detection_time": f"{detection_time:.3f}s",
-                "processing_time": f"{processing_time:.3f}s",
-                "total_time": f"{total_time:.3f}s"
-            }
+            "timing": {"detection_time": f"{det_time:.3f}s", "total_time": f"{time.time() - start:.3f}s"}
         })
 
     except Exception as e:
-        import traceback
-        print(f"ERROR: {str(e)}")
-        print(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        print(f"ERROR: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/")
 async def root():
