@@ -22,11 +22,11 @@ from peft import LoraConfig
 # ============================================================================
 
 # Model Configuration
-MODEL_NAME = "HuggingFaceTB/SmolVLM-500M-Instruct"  # 500M params, very fast!
+MODEL_NAME = "HuggingFaceTB/SmolVLM-Instruct"  # 500M params, very fast!
 # Alternative: "HuggingFaceTB/SmolVLM-Instruct" (2.2B) for better accuracy
 
 # Dataset Configuration
-DATASET_PATH = None  # None = auto-detect dataset/training_set/captions.jsonl
+DATASET_PATH = "../dataset/training_set/captions_subset_1000.jsonl"  # Using 1000 image subset for faster training
 BASE_DIR = None      # None = same as dataset directory
 
 # Training Configuration
@@ -44,10 +44,10 @@ LORA_RANK = 8
 LORA_ALPHA = 8
 LORA_DROPOUT = 0.1
 LORA_TARGET_MODULES = ["down_proj", "o_proj", "k_proj", "q_proj", "gate_proj", "up_proj", "v_proj"]
-USE_DORA = True  # DoRA: improved version of LoRA
+USE_DORA = False  # DoRA: improved version of LoRA
 
 # Quantization Configuration (4-bit for memory efficiency)
-USE_4BIT = True
+USE_4BIT = False
 BNB_4BIT_COMPUTE_DTYPE = torch.bfloat16  # or torch.float16
 BNB_4BIT_QUANT_TYPE = "nf4"
 
@@ -255,7 +255,6 @@ def main():
         save_total_limit=SAVE_TOTAL_LIMIT,
         fp16=False,
         bf16=True if device == "cuda" else False,
-        max_seq_length=2048,
         # Important for VLM training
         remove_unused_columns=False,
         # Using custom data collator, so skip default dataset preparation
